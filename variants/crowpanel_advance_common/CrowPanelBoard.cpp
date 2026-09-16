@@ -1,6 +1,10 @@
 #include "CrowPanelBoard.h"
 
-// Deterministic GT911 power-on reset. The controller latches BOTH its I2C slave
+// Deterministic touch-controller power-on reset, done here (before display.begin())
+// rather than left to LovyanGFX. Which sequence runs depends on the part fitted:
+// the 3.5 has a GT911, the 2.4/2.8 an FT6336U (CROWPANEL_TOUCH_FT6336).
+//
+// GT911 branch: the controller latches BOTH its I2C slave
 // address and its startup state from the INT line level at the moment RST is
 // released. LovyanGFX's Touch_GT911::init() pulses only RST and leaves INT
 // floating, so it occasionally comes up ACKing I2C but never asserting data-ready
@@ -9,7 +13,20 @@
 // before display.begin(), with the datasheet INT/RST timing and INT held HIGH at
 // the RST rising edge to select addr 0x14 (matching CrowPanelLGFX's touch config).
 #ifndef CROWPANEL_RGB
-static void gt911_reset() {
+#if defined(CROWPANEL_TOUCH_FT6336)
+// 2.4"/2.8": FT6336U at a FIXED I2C address (0x38) -- measured, see CrowPanelLGFX.h. There is
+// no INT-level address strapping to honour, so INT stays an input the whole time and we only
+// pulse RST. Driving INT here would be actively wrong: it is the controller's output.
+static void touch_reset() {
+  pinMode(PIN_TOUCH_INT, INPUT);
+  pinMode(PIN_TOUCH_RST, OUTPUT);
+  digitalWrite(PIN_TOUCH_RST, LOW);
+  delay(10);                           // datasheet: RST low > 5 ms
+  digitalWrite(PIN_TOUCH_RST, HIGH);
+  delay(300);                          // controller boot before it will ACK I2C
+}
+#else
+static void touch_reset() {
   pinMode(PIN_TOUCH_RST, OUTPUT);
   pinMode(PIN_TOUCH_INT, OUTPUT);
   digitalWrite(PIN_TOUCH_RST, LOW);    // assert reset
@@ -23,7 +40,8 @@ static void gt911_reset() {
   delay(55);                           // firmware boot (>50 ms) before first I2C
   pinMode(PIN_TOUCH_INT, INPUT);       // hand INT back as the interrupt line
 }
-#endif
+#endif // CROWPANEL_TOUCH_FT6336
+#endif // !CROWPANEL_RGB
 
 void CrowPanelBoard::begin() {
   ESP32Board::begin();
@@ -31,7 +49,7 @@ void CrowPanelBoard::begin() {
 #ifndef CROWPANEL_RGB
   // ---- SPI tier (2.4/2.8/3.5): SPI display, GT911 on its own INT/RST, PWM backlight, audio path ----
   // Bring the touch controller up deterministically before anything probes it.
-  gt911_reset();
+  touch_reset();
 
   pinMode(PIN_LORA_MIC_MUX, OUTPUT);
   digitalWrite(PIN_LORA_MIC_MUX, LOW);
